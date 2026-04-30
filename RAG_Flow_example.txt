@@ -1,0 +1,4 @@
+python3 tokenize_pdfs.py ./PDFs/*.pdf --output qdrant_points.jsonl
+python3 qdrant_upload.py import qdrant_points.jsonl --verify
+python3 qdrant_upload.py sources
+python3 ingestion_script.py ask "your question" --ollama-model llama3

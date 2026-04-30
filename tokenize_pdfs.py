@@ -25,7 +25,6 @@ from typing import Any, Iterable, Protocol
 
 
 DEFAULT_MODEL = "sentence-transformers/multi-qa-distilbert-cos-v1"
-DEFAULT_COLLECTION = "pdf_chunks"
 DEFAULT_CHUNK_TOKENS = 512
 DEFAULT_OVERLAP_TOKENS = 96
 DEFAULT_BATCH_SIZE = 32
@@ -178,12 +177,6 @@ def validate_input_files(file_paths: Iterable[Path]) -> list[Path]:
 
 def count_text_tokens(tokenizer: Any, text: str) -> int:
     return len(tokenizer(text, add_special_tokens=False, truncation=False)["input_ids"])
-
-
-def count_tokens(model: TokenizingModel, texts: list[str]) -> list[int]:
-    tokenizer = model.tokenizer
-    encoded = tokenizer(texts, add_special_tokens=True, truncation=False)
-    return [len(input_ids) for input_ids in encoded["input_ids"]]
 
 
 def split_oversized_block(tokenizer: Any, block: DocumentBlock, max_tokens: int) -> list[DocumentBlock]:
@@ -417,40 +410,6 @@ def write_jsonl(points: Iterable[PreparedPoint], output_path: Path) -> None:
             output_file.write(json.dumps(asdict(point), ensure_ascii=False) + "\n")
 
 
-def upsert_points_to_qdrant(
-    points: list[PreparedPoint],
-    collection_name: str,
-    url: str,
-    distance: str,
-) -> None:
-    try:
-        from qdrant_client import QdrantClient
-        from qdrant_client.models import Distance, PointStruct, VectorParams
-    except ImportError as error:
-        raise ImportError(missing_dependency_message("qdrant-client")) from error
-
-    if not points:
-        raise ValueError("No points to upload.")
-
-    distance_value = getattr(Distance, distance.upper())
-    client = QdrantClient(url=url)
-    vector_size = len(points[0].vector)
-    existing = [collection.name for collection in client.get_collections().collections]
-    if collection_name not in existing:
-        client.create_collection(
-            collection_name=collection_name,
-            vectors_config=VectorParams(size=vector_size, distance=distance_value),
-        )
-
-    client.upsert(
-        collection_name=collection_name,
-        points=[
-            PointStruct(id=point.id, vector=point.vector, payload=point.payload)
-            for point in points
-        ],
-    )
-
-
 def default_output_path(files: list[Path]) -> Path:
     if len(files) == 1:
         return files[0].with_name(f"{files[0].stem}_qdrant_points.jsonl")
@@ -501,27 +460,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable normalized embeddings. Keep enabled for cosine-similarity Qdrant collections.",
     )
-    parser.add_argument(
-        "--upload-qdrant",
-        action="store_true",
-        help="Also upsert generated points into a local Qdrant collection.",
-    )
-    parser.add_argument(
-        "--qdrant-url",
-        default="http://localhost:6333",
-        help="Qdrant URL for --upload-qdrant. Default: http://localhost:6333",
-    )
-    parser.add_argument(
-        "--collection",
-        default=DEFAULT_COLLECTION,
-        help=f"Qdrant collection name for --upload-qdrant. Default: {DEFAULT_COLLECTION}",
-    )
-    parser.add_argument(
-        "--distance",
-        choices=("cosine", "dot", "euclid", "manhattan"),
-        default="cosine",
-        help="Qdrant vector distance for collection creation. Default: cosine",
-    )
     return parser.parse_args()
 
 
@@ -539,14 +477,6 @@ def main() -> None:
     )
     write_jsonl(prepared_points, output_path)
 
-    if args.upload_qdrant:
-        upsert_points_to_qdrant(
-            points=prepared_points,
-            collection_name=args.collection,
-            url=args.qdrant_url,
-            distance=args.distance,
-        )
-
     token_counts = [int(point.payload["metadata"]["token_count"]) for point in prepared_points]
     processed_files = sorted({str(point.payload["source"]) for point in prepared_points})
     print(f"Processed files: {len(processed_files)}")
@@ -555,8 +485,6 @@ def main() -> None:
     print(f"Qdrant points written: {len(prepared_points)}")
     print(f"Token range: {min(token_counts)}-{max(token_counts)}")
     print(f"Output: {output_path}")
-    if args.upload_qdrant:
-        print(f"Uploaded to Qdrant collection '{args.collection}' at {args.qdrant_url}")
 
 
 if __name__ == "__main__":

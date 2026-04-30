@@ -1,11 +1,10 @@
-"""Import tokenizer JSONL output into local Qdrant and run semantic searches.
+"""Import tokenizer JSONL output into local Qdrant and inspect loaded data.
 
 Qdrant must be running before you use this script. For a local Docker setup:
     docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
 
 Examples:
-    python3 qdrant_upload.py import ./qdrant_points.jsonl --verify --sample-query "access control"
-    python3 qdrant_upload.py search "What does the document say about incident response?"
+    python3 qdrant_upload.py import ./qdrant_points.jsonl --verify
     python3 qdrant_upload.py health
     python3 qdrant_upload.py sources
 """
@@ -17,12 +16,10 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from textwrap import shorten
 from typing import Any, Iterable
 
 
 DEFAULT_COLLECTION = "pdf_chunks"
-DEFAULT_MODEL = "sentence-transformers/multi-qa-distilbert-cos-v1"
 DEFAULT_URL = "http://localhost:6333"
 DEFAULT_BATCH_SIZE = 100
 DEFAULT_TIMEOUT = 10.0
@@ -38,7 +35,7 @@ class QdrantPoint:
 def missing_dependency_message(package: str) -> str:
     return (
         f"Missing dependency: {package}. Install dependencies with:\n"
-        "python3 -m pip install qdrant-client sentence-transformers"
+        "python3 -m pip install qdrant-client"
     )
 
 
@@ -49,15 +46,6 @@ def get_qdrant_client(url: str, api_key: str | None, timeout: float):
         raise ImportError(missing_dependency_message("qdrant-client")) from error
 
     return QdrantClient(url=url, api_key=api_key, timeout=timeout)
-
-
-def load_embedding_model(model_name: str):
-    try:
-        from sentence_transformers import SentenceTransformer
-    except ImportError as error:
-        raise ImportError(missing_dependency_message("sentence-transformers")) from error
-
-    return SentenceTransformer(model_name)
 
 
 def read_jsonl(jsonl_path: Path) -> Iterable[QdrantPoint]:
@@ -231,9 +219,6 @@ def import_jsonl_to_qdrant(
     batch_size: int,
     recreate: bool,
     verify: bool,
-    sample_query: str | None,
-    model_name: str,
-    limit: int,
 ) -> None:
     client = get_qdrant_client(url, api_key, timeout)
     points = load_points(jsonl_path)
@@ -254,20 +239,6 @@ def import_jsonl_to_qdrant(
 
     if verify:
         verify_collection(client, collection_name, expected_ids=[point.id for point in points[: min(10, len(points))]])
-
-    if sample_query:
-        print("\nSample query")
-        search_qdrant(
-            query=sample_query,
-            url=url,
-            api_key=api_key,
-            timeout=timeout,
-            collection_name=collection_name,
-            model_name=model_name,
-            limit=limit,
-            query_filter=None,
-            show_vector=False,
-        )
 
 
 def verify_collection(client: Any, collection_name: str, expected_ids: list[str] | None = None) -> None:
@@ -382,84 +353,6 @@ def summarize_sources(
         print(f"  source={source}")
 
 
-def build_field_filter(filter_json: str | None):
-    if not filter_json:
-        return None
-
-    try:
-        from qdrant_client.models import FieldCondition, Filter, MatchValue
-    except ImportError as error:
-        raise ImportError(missing_dependency_message("qdrant-client")) from error
-
-    try:
-        raw_filter = json.loads(filter_json)
-    except json.JSONDecodeError as error:
-        raise ValueError("--filter must be a JSON object, for example '{\"file_name\":\"paper.pdf\"}'") from error
-
-    if not isinstance(raw_filter, dict):
-        raise ValueError("--filter must be a JSON object")
-
-    return Filter(
-        must=[
-            FieldCondition(key=key, match=MatchValue(value=value))
-            for key, value in raw_filter.items()
-        ]
-    )
-
-
-def search_qdrant(
-    query: str,
-    url: str,
-    api_key: str | None,
-    timeout: float,
-    collection_name: str,
-    model_name: str,
-    limit: int,
-    query_filter: str | None,
-    show_vector: bool,
-) -> None:
-    client = get_qdrant_client(url, api_key, timeout)
-    model = load_embedding_model(model_name)
-    query_vector = model.encode([query], normalize_embeddings=True, show_progress_bar=False)[0].tolist()
-    qdrant_filter = build_field_filter(query_filter)
-
-    results = client.query_points(
-        collection_name=collection_name,
-        query=query_vector,
-        query_filter=qdrant_filter,
-        limit=limit,
-        with_payload=True,
-        with_vectors=show_vector,
-    ).points
-
-    if not results:
-        print("No search results found.")
-        return
-
-    for index, point in enumerate(results, start=1):
-        payload = point.payload or {}
-        metadata = payload.get("metadata", {})
-        preview = shorten(str(payload.get("text", "")).replace("\n", " "), width=220, placeholder="...")
-
-        print(f"\nResult {index}")
-        print(f"score: {point.score}")
-        print(f"point_id: {point.id}")
-        print(
-            f"file: {payload.get('file_name')} "
-            f"pages: {payload.get('page_start')}-{payload.get('page_end')} "
-            f"chunk: {payload.get('chunk_index')} "
-            f"tokens: {payload.get('token_count')}"
-        )
-        if metadata.get("section_titles"):
-            print(f"sections: {metadata.get('section_titles')}")
-        print(f"text: {preview}")
-
-        if show_vector:
-            vector = point.vector or []
-            print(f"vector_dimensions: {len(vector)}")
-            print(f"vector_preview: {json.dumps(vector[:20])}")
-
-
 def check_connection(url: str, api_key: str | None, timeout: float) -> None:
     client = get_qdrant_client(url, api_key, timeout)
     collections = client.get_collections().collections
@@ -474,7 +367,7 @@ def check_connection(url: str, api_key: str | None, timeout: float) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Import tokenizer JSONL points into Qdrant and search them."
+        description="Import tokenizer JSONL points into Qdrant and inspect loaded data."
     )
     parser.add_argument(
         "--url",
@@ -524,36 +417,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Confirm the collection count and retrieve sample imported ids after import.",
     )
-    import_parser.add_argument(
-        "--sample-query",
-        help="Run a semantic query immediately after import to display fresh results.",
-    )
-    import_parser.add_argument(
-        "--model",
-        default=DEFAULT_MODEL,
-        help=f"SentenceTransformer model for sample query embeddings. Default: {DEFAULT_MODEL}",
-    )
-    import_parser.add_argument("--limit", type=int, default=5, help="Number of sample query results.")
-
-    search_parser = subparsers.add_parser("search", help="Search the Qdrant collection.")
-    search_parser.add_argument("query", help="Natural-language search query.")
-    search_parser.add_argument(
-        "--model",
-        default=DEFAULT_MODEL,
-        help=f"SentenceTransformer model for query embeddings. Default: {DEFAULT_MODEL}",
-    )
-    search_parser.add_argument("--limit", type=int, default=5, help="Number of results.")
-    search_parser.add_argument(
-        "--filter",
-        default=None,
-        help='Optional Qdrant equality filter as JSON. Example: \'{"file_name":"paper.pdf"}\'',
-    )
-    search_parser.add_argument(
-        "--show-vector",
-        action="store_true",
-        help="Print the first 20 values of each returned vector.",
-    )
-
     verify_parser = subparsers.add_parser("verify", help="Confirm data is present in Qdrant.")
     verify_parser.add_argument("--sample", type=int, default=1, help="Number of sample points to scroll.")
 
@@ -591,21 +454,6 @@ def main() -> None:
                 batch_size=args.batch_size,
                 recreate=args.recreate,
                 verify=args.verify,
-                sample_query=args.sample_query,
-                model_name=args.model,
-                limit=args.limit,
-            )
-        elif args.command == "search":
-            search_qdrant(
-                query=args.query,
-                url=args.url,
-                api_key=args.api_key,
-                timeout=args.timeout,
-                collection_name=args.collection,
-                model_name=args.model,
-                limit=args.limit,
-                query_filter=args.filter,
-                show_vector=args.show_vector,
             )
         elif args.command == "verify":
             client = get_qdrant_client(args.url, args.api_key, args.timeout)
