@@ -36,7 +36,7 @@ The Compose stack starts:
 
 - `ollama`: local LLM runtime, exposed on `http://localhost:11434`
 - `qdrant`: vector database, exposed on `http://localhost:6333` and `localhost:6334`
-- `rag-api`: FastAPI service for search and ask requests, exposed on `http://localhost:8000`
+- `rag-api`: FastAPI service for search and ask requests, exposed on `http://localhost:8010`
 - `streamlit`: browser UI for the RAG query layer, exposed on `http://localhost:8501`
 - `ollama-model-init`: one-time helper that pulls the configured Ollama model before the UI starts
 
@@ -53,8 +53,10 @@ From your host machine, the existing scripts still use localhost:
 ```text
 QDRANT_URL=http://localhost:6333
 OLLAMA_URL=http://localhost:11434
-RAG_API_URL=http://localhost:8000
+RAG_API_URL=http://localhost:8010
 ```
+
+The API container still listens on port `8000` inside Docker. The host port defaults to `8010` to avoid collisions with tools such as Portainer that commonly use host port `8000`. Override it with `RAG_API_HOST_PORT` if needed.
 
 Start the stack from the `UI_Creation/` folder:
 
@@ -152,13 +154,13 @@ python3 ingestion_script.py \
 Or call the FastAPI service directly:
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8010/health
 ```
 
 Search without answer generation:
 
 ```bash
-curl -X POST http://localhost:8000/search \
+curl -X POST http://localhost:8010/search \
   -H "Content-Type: application/json" \
   -d '{"query":"What does the material say about access control?","top_k":5,"candidate_k":20}'
 ```
@@ -166,7 +168,7 @@ curl -X POST http://localhost:8000/search \
 Retrieve context and ask Ollama:
 
 ```bash
-curl -X POST http://localhost:8000/ask \
+curl -X POST http://localhost:8010/ask \
   -H "Content-Type: application/json" \
   -d '{"query":"Summarize incident response requirements","ollama_model":"llama3","top_k":3,"candidate_k":10}'
 ```
@@ -201,7 +203,7 @@ uvicorn rag_api:app --host 0.0.0.0 --port 8000
 The interactive API docs are available at:
 
 ```text
-http://localhost:8000/docs
+http://localhost:8010/docs
 ```
 
 ### API Debugging and Error Output
@@ -241,13 +243,13 @@ Streamlit also has a `Show debug payloads` checkbox in the sidebar. When enabled
 Check API health:
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8010/health
 ```
 
 Inspect a failing API call with verbose curl output:
 
 ```bash
-curl -v -X POST http://localhost:8000/search \
+curl -v -X POST http://localhost:8010/search \
   -H "Content-Type: application/json" \
   -d '{"query":"test","collection":"pdf_chunks"}'
 ```
@@ -255,7 +257,7 @@ curl -v -X POST http://localhost:8000/search \
 Example with longer timeouts and fewer chunks:
 
 ```bash
-curl -X POST http://localhost:8000/ask \
+curl -X POST http://localhost:8010/ask \
   -H "Content-Type: application/json" \
   -d '{"query":"Summarize incident response requirements","top_k":2,"candidate_k":5,"timeout":60,"ollama_timeout":900}'
 ```
