@@ -1,0 +1,123 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: rag-ollama
+    ports:
+      - "${OLLAMA_HOST_PORT:-11434}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  ollama-model-init:
+    image: ollama/ollama:latest
+    container_name: rag-ollama-model-init
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+    command: ["pull", "${OLLAMA_MODEL:-llama3}"]
+    restart: "no"
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: rag-qdrant
+    ports:
+      - "${QDRANT_HTTP_HOST_PORT:-6333}:6333"
+      - "${QDRANT_GRPC_HOST_PORT:-6334}:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: 6333
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "timeout 5 bash -c '</dev/tcp/127.0.0.1/6333' || exit 1",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 10s
+    restart: unless-stopped
+
+  rag-api:
+    build:
+      context: ..
+      dockerfile: UI_Creation/Dockerfile.rag-api
+    container_name: rag-api
+    ports:
+      - "${RAG_API_HOST_PORT:-8000}:8000"
+    volumes:
+      - ..:/app
+      - hf_cache:/root/.cache/huggingface
+      - torch_cache:/root/.cache/torch
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: "${QDRANT_COLLECTION:-pdf_chunks}"
+      QDRANT_API_KEY: "${QDRANT_API_KEY:-}"
+      EMBEDDING_MODEL: "${EMBEDDING_MODEL:-sentence-transformers/multi-qa-distilbert-cos-v1}"
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-llama3}"
+      TOP_K: "${TOP_K:-5}"
+      CANDIDATE_K: "${CANDIDATE_K:-20}"
+      QDRANT_TIMEOUT: "${QDRANT_TIMEOUT:-30}"
+      OLLAMA_TIMEOUT: "${OLLAMA_TIMEOUT:-300}"
+      DEBUG_RAG: "${DEBUG_RAG:-false}"
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      ollama-model-init:
+        condition: service_completed_successfully
+    command: ["uvicorn", "rag_api:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)\"",
+        ]
+      interval: 20s
+      timeout: 10s
+      retries: 8
+      start_period: 20s
+    restart: unless-stopped
+
+  streamlit:
+    build:
+      context: ..
+      dockerfile: UI_Creation/Dockerfile.streamlit
+    container_name: rag-streamlit
+    ports:
+      - "${STREAMLIT_HOST_PORT:-8501}:8501"
+    volumes:
+      - ..:/app
+    environment:
+      RAG_API_URL: http://rag-api:8000
+      QDRANT_COLLECTION: "${QDRANT_COLLECTION:-pdf_chunks}"
+      EMBEDDING_MODEL: "${EMBEDDING_MODEL:-sentence-transformers/multi-qa-distilbert-cos-v1}"
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-llama3}"
+      TOP_K: "${TOP_K:-5}"
+      CANDIDATE_K: "${CANDIDATE_K:-20}"
+      QDRANT_TIMEOUT: "${QDRANT_TIMEOUT:-30}"
+      OLLAMA_TIMEOUT: "${OLLAMA_TIMEOUT:-300}"
+      RAG_API_REQUEST_TIMEOUT: "${RAG_API_REQUEST_TIMEOUT:-330}"
+      DEBUG_RAG: "${DEBUG_RAG:-false}"
+    depends_on:
+      rag-api:
+        condition: service_healthy
+    command: ["streamlit", "run", "UI_Creation/app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+  qdrant_data:
+  hf_cache:
+  torch_cache:
