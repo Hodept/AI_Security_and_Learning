@@ -1,7 +1,6 @@
 services:
   ollama:
     image: ollama/ollama:latest
-    container_name: rag-ollama
     ports:
       - "${OLLAMA_HOST_PORT:-11434}:11434"
     volumes:
@@ -16,7 +15,6 @@ services:
 
   ollama-model-init:
     image: ollama/ollama:latest
-    container_name: rag-ollama-model-init
     environment:
       OLLAMA_HOST: http://ollama:11434
     depends_on:
@@ -27,7 +25,6 @@ services:
 
   qdrant:
     image: qdrant/qdrant:latest
-    container_name: rag-qdrant
     ports:
       - "${QDRANT_HTTP_HOST_PORT:-6333}:6333"
       - "${QDRANT_GRPC_HOST_PORT:-6334}:6334"
@@ -52,7 +49,6 @@ services:
     build:
       context: ..
       dockerfile: UI_Creation/Dockerfile.rag-api
-    container_name: rag-api
     ports:
       - "${RAG_API_HOST_PORT:-8000}:8000"
     volumes:
@@ -94,7 +90,6 @@ services:
     build:
       context: ..
       dockerfile: UI_Creation/Dockerfile.streamlit
-    container_name: rag-streamlit
     ports:
       - "${STREAMLIT_HOST_PORT:-8501}:8501"
     volumes:

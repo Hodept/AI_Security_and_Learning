@@ -63,6 +63,17 @@ cd UI_Creation
 docker compose up --build
 ```
 
+You can also start the stack from any directory by passing the Compose file path:
+
+```bash
+docker compose \
+  --project-name ai-security-rag \
+  -f /path/to/AI_Security_and_Learning/UI_Creation/docker-compose.yml \
+  up --build
+```
+
+The Compose file uses paths relative to `UI_Creation/docker-compose.yml`, so `context: ..` and `..:/app` resolve to the surrounding `AI_Security_and_Learning/` folder no matter where the command is launched from. Use a stable `--project-name` to avoid accidentally reusing containers from another copy of the project.
+
 The first run may take a while because Docker needs to download images, Python packages, the SentenceTransformer embedding model, and the default Ollama model. By default, the stack uses the same settings as the scripts:
 
 ```text
