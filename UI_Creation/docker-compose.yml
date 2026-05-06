@@ -1,26 +1,71 @@
+name: ai-security-rag
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "${LOG_MAX_SIZE:-10m}"
+    max-file: "${LOG_MAX_FILE:-3}"
+
+x-common-env: &common-env
+  TZ: "${TZ:-UTC}"
+
+# Optional NVIDIA GPU configuration for the GCP ai-dev-node:
+# - Ubuntu 22.04.5 LTS, kernel 6.8.0-1054-gcp
+# - 8 vCPU, 31.34 GiB RAM
+# - NVIDIA Tesla T4
+#
+# Before enabling this block, verify the host has the NVIDIA driver and
+# NVIDIA Container Toolkit configured:
+#
+#   nvidia-smi
+#   docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
+#
+# To enable GPU for a service, uncomment the merge line:
+#
+#   <<: *nvidia-gpu
+#
+# inside that service.
+x-nvidia-gpu: &nvidia-gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: 1
+            capabilities: ["gpu"]
+
 services:
   ollama:
     image: ollama/ollama:latest
+    # <<: *nvidia-gpu
     ports:
       - "${OLLAMA_HOST_PORT:-11434}:11434"
     volumes:
-      - ollama_data:/root/.ollama
+      - "${OLLAMA_DATA_PATH:-/data-ssd/ollama}:/root/.ollama"
+    environment:
+      <<: *common-env
+      OLLAMA_KEEP_ALIVE: "${OLLAMA_KEEP_ALIVE:-10m}"
+      OLLAMA_NUM_PARALLEL: "${OLLAMA_NUM_PARALLEL:-1}"
+      OLLAMA_MAX_LOADED_MODELS: "${OLLAMA_MAX_LOADED_MODELS:-1}"
     healthcheck:
-      test: ["CMD", "ollama", "list"]
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 20s
+      start_period: 30s
+    logging: *default-logging
     restart: unless-stopped
 
   ollama-model-init:
     image: ollama/ollama:latest
     environment:
+      <<: *common-env
       OLLAMA_HOST: http://ollama:11434
     depends_on:
       ollama:
         condition: service_healthy
     command: ["pull", "${OLLAMA_MODEL:-llama3}"]
+    logging: *default-logging
     restart: "no"
 
   qdrant:
@@ -29,10 +74,12 @@ services:
       - "${QDRANT_HTTP_HOST_PORT:-6333}:6333"
       - "${QDRANT_GRPC_HOST_PORT:-6334}:6334"
     volumes:
-      - qdrant_data:/qdrant/storage
+      - "${QDRANT_DATA_PATH:-/data-ssd/qdrant}:/qdrant/storage"
     environment:
+      <<: *common-env
       QDRANT__SERVICE__HTTP_PORT: 6333
       QDRANT__SERVICE__GRPC_PORT: 6334
+      QDRANT__STORAGE__PERFORMANCE__MAX_SEARCH_THREADS: "${QDRANT_MAX_SEARCH_THREADS:-4}"
     healthcheck:
       test:
         [
@@ -43,6 +90,7 @@ services:
       timeout: 10s
       retries: 8
       start_period: 10s
+    logging: *default-logging
     restart: unless-stopped
 
   rag-api:
@@ -53,9 +101,10 @@ services:
       - "${RAG_API_HOST_PORT:-8010}:8000"
     volumes:
       - ..:/app
-      - hf_cache:/root/.cache/huggingface
-      - torch_cache:/root/.cache/torch
+      - "${HF_CACHE_PATH:-/data/huggingface}:/root/.cache/huggingface"
+      - "${TORCH_CACHE_PATH:-/data/torch}:/root/.cache/torch"
     environment:
+      <<: *common-env
       QDRANT_URL: http://qdrant:6333
       QDRANT_COLLECTION: "${QDRANT_COLLECTION:-pdf_chunks}"
       QDRANT_API_KEY: "${QDRANT_API_KEY:-}"
@@ -68,6 +117,9 @@ services:
       OLLAMA_TIMEOUT: "${OLLAMA_TIMEOUT:-300}"
       DEBUG_RAG: "${DEBUG_RAG:-false}"
       LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+      TOKENIZERS_PARALLELISM: "${TOKENIZERS_PARALLELISM:-false}"
+      OMP_NUM_THREADS: "${OMP_NUM_THREADS:-4}"
+      MKL_NUM_THREADS: "${MKL_NUM_THREADS:-4}"
     depends_on:
       qdrant:
         condition: service_healthy
@@ -84,6 +136,7 @@ services:
       timeout: 10s
       retries: 8
       start_period: 20s
+    logging: *default-logging
     restart: unless-stopped
 
   streamlit:
@@ -95,6 +148,7 @@ services:
     volumes:
       - ..:/app
     environment:
+      <<: *common-env
       RAG_API_URL: http://rag-api:8000
       QDRANT_COLLECTION: "${QDRANT_COLLECTION:-pdf_chunks}"
       EMBEDDING_MODEL: "${EMBEDDING_MODEL:-sentence-transformers/multi-qa-distilbert-cos-v1}"
@@ -109,10 +163,5 @@ services:
       rag-api:
         condition: service_healthy
     command: ["streamlit", "run", "UI_Creation/app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+    logging: *default-logging
     restart: unless-stopped
-
-volumes:
-  ollama_data:
-  qdrant_data:
-  hf_cache:
-  torch_cache:
