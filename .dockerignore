@@ -1,0 +1,24 @@
+.git
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+*.log
+
+# Keep large runtime data out of Docker build contexts. Compose mounts these
+# paths from /data and /data-ssd instead.
+data/
+data-ssd/
+ollama/
+qdrant/
+.cache/
+models/
+*.gguf
+*.safetensors
+*.bin
+*.pt
+*.pth
