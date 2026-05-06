@@ -11,6 +11,7 @@ x-common-env: &common-env
 
 x-app-build: &app-build
   image: ai-security-rag-app:latest
+  pull_policy: build
   build:
     context: ..
     dockerfile: UI_Creation/Dockerfile.rag-api
